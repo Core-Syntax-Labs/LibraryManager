@@ -75,6 +75,7 @@ class Biblioteca:
         # Ativa o suporte a chaves estrangeiras
         self.conexao.execute("PRAGMA foreign_keys = ON")
         self.criar_tabelas()
+        self.popular_livros_exemplo()
 
         # Listas mantidas em memória durante a execução do programa.
         self.livros = []
@@ -120,6 +121,31 @@ class Biblioteca:
                     REFERENCES leitores(matricula)
             )
         """)
+        self.conexao.commit()
+
+    def popular_livros_exemplo(self):
+        """Insere livros de exemplo apenas se a tabela estiver vazia."""
+        cursor = self.conexao.cursor()
+
+        cursor.execute("SELECT COUNT(*) FROM livros")
+        if cursor.fetchone()[0] > 0:
+            return
+
+        livros_exemplo = [
+            ("Crime e Castigo", "Fiódor Dostoiévski", 3),
+            ("1984", "George Orwell", 3),
+            ("A Biblioteca da Meia-Noite", "Matt Haig", 3),
+            ("A Revolução dos Bichos", "George Orwell", 3),
+            ("A Metamorfose", "Franz Kafka", 3),
+            ("O Médico e o Monstro", "Robert Louis Stevenson", 3),
+            ("Capitães de Areia", "Jorge Amado", 3),
+        ]
+
+        cursor.executemany("""
+            INSERT INTO livros (titulo, autor, quantidade)
+            VALUES (?, ?, ?)
+        """, livros_exemplo)
+
         self.conexao.commit()
 
     def carregar_livros(self):
@@ -250,16 +276,37 @@ class Biblioteca:
             self.leitores.append(leitor)
 
     def cadastrar_leitor(self):
-        nome = input("Nome: ")
-        matricula = input("Matrícula: ")
+        nome = input("Nome: ").strip()
+        matricula = input("Matrícula: ").strip()
+
+        if not nome or not matricula:
+            print("Nome e matrícula são obrigatórios!")
+            return
 
         if any(l.matricula == matricula for l in self.leitores):
             print("Matrícula já cadastrada!")
             return
 
-        # TODO: Implementar a persistência do leitor no SQLite.
-        print("Cadastro de leitor aguardando implementação da persistência.")
-        return
+        try:
+            cursor = self.conexao.cursor()
+
+            cursor.execute("""
+                INSERT INTO leitores (matricula, nome)
+                VALUES (?, ?)
+            """, (matricula, nome))
+
+            self.conexao.commit()
+
+        except sqlite3.IntegrityError:
+            # Garantia extra: a PRIMARY KEY também barra matrícula duplicada.
+            self.conexao.rollback()
+            print("Matrícula já cadastrada!")
+            return
+
+        # Mantém a lista em memória sincronizada com o banco.
+        self.leitores.append(Leitor(nome, matricula))
+
+        print("Leitor cadastrado com sucesso!")
 
     def emprestar_livro(self):
         if not self.livros or not self.leitores:
@@ -483,7 +530,31 @@ class Biblioteca:
 
 # PROGRAMA PRINCIPAL
 
+def perguntar_continuar():
+    """Pergunta se o usuário quer voltar ao menu (1) ou sair (0)."""
+    while True:
+        escolha = input("\nDigite 1 para voltar ao menu ou 0 para sair: ").strip()
+
+        if escolha == "1":
+            return True
+        if escolha == "0":
+            return False
+
+        print("Opção inválida!")
+
+
 biblioteca = Biblioteca()
+
+acoes = {
+    "1": biblioteca.cadastrar_livro,
+    "2": biblioteca.cadastrar_leitor,
+    "3": biblioteca.emprestar_livro,
+    "4": biblioteca.registrar_devolucao,
+    "5": biblioteca.consultar_disponiveis,
+    "6": biblioteca.consultar_emprestados,
+    "7": biblioteca.consultar_pendencias,
+    "8": biblioteca.relatorio,
+}
 
 while True:
 
@@ -498,35 +569,20 @@ while True:
     print("8 - Gerar relatório")
     print("0 - Sair")
 
-    opcao = input("\nEscolha uma opção: ")
+    opcao = input("\nEscolha uma opção: ").strip()
 
-    if opcao == "1":
-        biblioteca.cadastrar_livro()
-
-    elif opcao == "2":
-        biblioteca.cadastrar_leitor()
-
-    elif opcao == "3":
-        biblioteca.emprestar_livro()
-
-    elif opcao == "4":
-        biblioteca.registrar_devolucao()
-
-    elif opcao == "5":
-        biblioteca.consultar_disponiveis()
-
-    elif opcao == "6":
-        biblioteca.consultar_emprestados()
-
-    elif opcao == "7":
-        biblioteca.consultar_pendencias()
-
-    elif opcao == "8":
-        biblioteca.relatorio()
-
-    elif opcao == "0":
+    if opcao == "0":
         print("Sistema encerrado!")
         break
 
-    else:
+    acao = acoes.get(opcao)
+
+    if acao is None:
         print("Opção inválida!")
+        continue
+
+    acao()
+
+    if not perguntar_continuar():
+        print("Sistema encerrado!")
+        break
